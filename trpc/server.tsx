@@ -19,3 +19,6 @@ export const trpc = createTRPCOptionsProxy({
 //   }),
 //   queryClient: getQueryClient,
 // });
+
+// TODO: 有什么作用
+export const caller = appRouter.createCaller(createTRPCContext);
