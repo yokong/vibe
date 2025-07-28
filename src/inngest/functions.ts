@@ -7,7 +7,13 @@
 // getSandbox, lastAssistantTextmessageContent: 工具函数
 import { PROMPT } from '@/prompt';
 import { Sandbox } from '@e2b/code-interpreter';
-import { createAgent, createNetwork, createTool, openai, Tool } from '@inngest/agent-kit';
+import {
+  createAgent,
+  createNetwork,
+  createTool,
+  Tool,
+  gemini,
+} from '@inngest/agent-kit';
 import { z } from 'zod';
 import { inngest } from './client';
 import { getSandbox, lastAssistantTextmessageContent } from './utils';
@@ -20,12 +26,21 @@ interface AgentState {
   };
 }
 
-// 定义 Inngest Function
+/**
+ * 定义 Inngest 函数
+ * @see TODO: 补充 `inngest.createFunction` 文档
+ */
 export const codeAgentFunction = inngest.createFunction(
   { id: 'code-agent' }, // Function 唯一标识
   { event: 'code-agent/run' }, // 监听的事件类型
   async ({ event, step }) => {
-    // 1. 创建 E2B 沙盒，获取 sandboxId
+    /**
+     * 1. 创建 `E2B` 沙盒环境并获取沙盒ID
+     * 使用 step.run 方法执行名为 `get-sandbox-id` 的步骤
+     * 创建一个新的 E2B 沙盒实例，指定项目名称为 'vibe-nextjs-test-yokong-3'
+     * 返回沙盒ID，用于后续操作中连接到该沙盒环境
+     * @returns {string} 创建的沙盒ID
+     */
     const sandboxId = await step.run('get-sandbox-id', async () => {
       // 创建一个新的 E2B 沙盒实例
       const sandbox = await Sandbox.create('vibe-nextjs-test-yokong-3');
@@ -37,10 +52,20 @@ export const codeAgentFunction = inngest.createFunction(
       name: 'codeAgent', // Agent 名称
       system: PROMPT, // 系统提示词
       description: 'An expert coding agent', // Agent 描述
-      model: openai({
-        model: 'gpt-4.1', // 使用的 OpenAI 模型
+      // model: openai({
+      //   baseUrl: 'https://api.deepseek.com/v1',
+      //   model: 'deepseek-chat', // 使用的 OpenAI 模型
+      //   defaultParameters: {
+      //     temperature: 0.1, // 低温度，保证输出稳定
+      //   },
+      // }),
+      // Gemini
+      model: gemini({
+        model: 'gemini-2.0-flash',
         defaultParameters: {
-          temperature: 0.1, // 低温度，保证输出稳定
+          generationConfig: {
+            temperature: 1.5,
+          },
         },
       }),
       tools: [
@@ -61,7 +86,8 @@ export const codeAgentFunction = inngest.createFunction(
                  * 执行 E2B Command
                  * @see https://www.e2b.dev/docs/commands
                  */
-                const sandbox = await getSandbox(sandboxId); // 连接到沙盒
+                // 1. 连接 E2B 沙盒
+                const sandbox = await getSandbox(sandboxId);
                 const result = await sandbox.commands.run(command, {
                   onStdout: (data: string) => {
                     buffers.stdout += data;
@@ -70,11 +96,12 @@ export const codeAgentFunction = inngest.createFunction(
                     buffers.stderr += data;
                   },
                 });
-
                 return result.stdout; // 返回标准输出
               } catch (e) {
                 // 捕获并返回错误信息
-                console.error(`Command failed: ${e} \nstdout: ${buffers.stdout}\nstderror:${buffers.stderr}`);
+                console.error(
+                  `Command failed: ${e} \nstdout: ${buffers.stdout}\nstderror:${buffers.stderr}`
+                );
                 return `Command failed: ${e} \nstdout: ${buffers.stdout}\nstderror:${buffers.stderr}`;
               }
 
@@ -96,24 +123,30 @@ export const codeAgentFunction = inngest.createFunction(
               })
             ),
           }),
-          handler: async ({ files }, { step, network }: Tool.Options<AgentState>) => {
+          handler: async (
+            { files },
+            { step, network }: Tool.Options<AgentState>
+          ) => {
             /**
              * files 示例：
              * [ { path: "/app.tsx", content: "<p>app page</p>" }, ... ]
              */
-            const newFiles = await step?.run('createOrUpdateFiles', async () => {
-              try {
-                const updatedFiles = network.state.data.files || {};
-                const sandbox = await getSandbox(sandboxId);
-                for (const file of files) {
-                  await sandbox.files.write(file.path, file.content); // 写入文件
-                  updatedFiles[file.path] = file.content;
+            const newFiles = await step?.run(
+              'createOrUpdateFiles',
+              async () => {
+                try {
+                  const updatedFiles = network.state.data.files || {};
+                  const sandbox = await getSandbox(sandboxId);
+                  for (const file of files) {
+                    await sandbox.files.write(file.path, file.content); // 写入文件
+                    updatedFiles[file.path] = file.content;
+                  }
+                  return updatedFiles;
+                } catch (e) {
+                  return 'Error: ' + e;
                 }
-                return updatedFiles;
-              } catch (e) {
-                return 'Error: ' + e;
               }
-            });
+            );
 
             // 更新 network 的文件状态
             if (typeof newFiles === 'object') {
@@ -130,7 +163,10 @@ export const codeAgentFunction = inngest.createFunction(
           parameters: z.object({
             files: z.array(z.string()), // 需要读取的文件路径数组
           }),
-          handler: async ({ files }, { step, network }: Tool.Options<AgentState>) => {
+          handler: async (
+            { files },
+            { step, network }: Tool.Options<AgentState>
+          ) => {
             return await step?.run('readFile', async () => {
               try {
                 const sandbox = await getSandbox(sandboxId);
@@ -153,7 +189,8 @@ export const codeAgentFunction = inngest.createFunction(
       lifecycle: {
         // Agent 响应后处理：提取 summary 信息
         onResponse: async ({ result, network }) => {
-          const lastAssistantMessageText = lastAssistantTextmessageContent(result);
+          const lastAssistantMessageText =
+            lastAssistantTextmessageContent(result);
           if (lastAssistantMessageText && network) {
             if (lastAssistantMessageText.includes('<task_summary>')) {
               network.state.data.summary = lastAssistantMessageText;
@@ -182,7 +219,9 @@ export const codeAgentFunction = inngest.createFunction(
     // 4. 运行 Network，传入用户输入，驱动 Agent 执行
     const result = await network.run(event.data.value);
 
-    const isError = !result.state.data.summary || Object.keys(result.state.data.files || {}).length === 0;
+    const isError =
+      !result.state.data.summary ||
+      Object.keys(result.state.data.files || {}).length === 0;
     // 5. 获取沙盒的访问 URL
     const sandboxUrl = await step.run('get-sandbox-url', async () => {
       const sandbox = await getSandbox(sandboxId);
