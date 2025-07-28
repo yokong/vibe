@@ -5,11 +5,19 @@ import { useSuspenseQuery } from '@tanstack/react-query';
 import { MessageCard } from './message-card';
 import { MessageForm } from './message-form';
 import { useEffect, useRef } from 'react';
+import { Fragment } from '@/generated/prisma';
+import { MessageLoading } from './message-loading';
 
 interface Props {
   projectId: string;
+  activeFragment: Fragment | null;
+  setActiveFragment: (fragment: Fragment | null) => void;
 }
-export const MessagesContainer = ({ projectId }: Props) => {
+export const MessagesContainer = ({
+  projectId,
+  activeFragment,
+  setActiveFragment,
+}: Props) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const trpc = useTRPC();
 
@@ -17,21 +25,38 @@ export const MessagesContainer = ({ projectId }: Props) => {
    * 获取 projectId 对应的 messages
    */
   const { data: messages } = useSuspenseQuery(
-    trpc.messages.getMany.queryOptions({
-      projectId,
-    })
+    trpc.messages.getMany.queryOptions(
+      {
+        projectId,
+      },
+      {
+        // 每 5 秒重新获取一次
+        // TODO: tempare live message
+        refetchInterval: 5000,
+      }
+    )
   );
 
   useEffect(() => {
-    const lastAssistantMessage = messages.findLast((message) => message.role === 'ASSISTANT');
+    const lastAssistantMessageWithFragment = messages.findLast(
+      (message) => message.role === 'ASSISTANT' && !!message.fragment
+    );
 
-    if (lastAssistantMessage) {
-      // TODO set Acitve FragMENT
+    if (
+      lastAssistantMessageWithFragment &&
+      lastAssistantMessageWithFragment.fragment
+    ) {
+      // TODO set Active FragMENT
+      setActiveFragment(lastAssistantMessageWithFragment.fragment);
     }
-  }, [messages]);
+  }, [messages, setActiveFragment]);
   bottomRef.current?.scrollIntoView();
 
   useEffect(() => {}, [messages.length]);
+
+  const lastMessage = messages[messages.length - 1];
+  const isLastMessageUser = lastMessage?.role === 'USER';
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -43,11 +68,12 @@ export const MessagesContainer = ({ projectId }: Props) => {
               role={message.role}
               fragment={message.fragment!}
               createdAt={message.createdAt}
-              isActiveFragment={false}
-              onFragmentClick={() => {}}
+              isActiveFragment={activeFragment?.id === message.fragment?.id}
+              onFragmentClick={() => setActiveFragment(message.fragment)}
               type={message.type}
             />
           ))}
+          {isLastMessageUser && <MessageLoading />}
         </div>
         <div ref={bottomRef} />
       </div>
