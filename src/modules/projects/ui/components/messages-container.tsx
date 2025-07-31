@@ -19,6 +19,7 @@ export const MessagesContainer = ({
   setActiveFragment,
 }: Props) => {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastAssistantMessageIdRef = useRef<string | null>(null);
   const trpc = useTRPC();
 
   /**
@@ -52,7 +53,18 @@ export const MessagesContainer = ({
   }, [messages, setActiveFragment]);
   bottomRef.current?.scrollIntoView();
 
-  useEffect(() => {}, [messages.length]);
+  useEffect(() => {
+    const lastAssistantMessage = messages.findLast(
+      (message) => message.role === 'ASSISTANT'
+    );
+    if (
+      lastAssistantMessage?.fragment &&
+      lastAssistantMessage.id !== lastAssistantMessageIdRef.current
+    ) {
+      setActiveFragment(lastAssistantMessage.fragment);
+      lastAssistantMessageIdRef.current = lastAssistantMessage.id;
+    }
+  }, [messages.length]);
 
   const lastMessage = messages[messages.length - 1];
   const isLastMessageUser = lastMessage?.role === 'USER';
